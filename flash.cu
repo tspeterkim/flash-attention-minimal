@@ -1,22 +1,21 @@
-#include <torch/types.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
-
-___global___
-void forward_kernel(const float* Q, const float* K, const float* V, const int N, const int d, const int Tc,
-                    const int Tr, const int Bc, const int Br, const float softmax_scale,
+__global__ 
+void forward_kernel(const float* Q, const float* K, const float* V, const int N, const int d,
+                    const int Tc, const int Tr, const int Bc, const int Br, const float softmax_scale,
                     float* l, float *m, float* O) {
     int tx = threadIdx.x;
     int bx = blockIdx.x; int by = blockIdx.y;  // batch and head index
 
     // Offset into Q,K,V,O,l,m - different for each batch and head
     int qkv_offset = (bx * gridDim.y * N * d) + (by * N * d);  // gridDim.y = nh
-    int lm_offset;  // offset for l and m
+    int lm_offset = (bx * gridDim.y * N) + (by * N);  // offset for l and m
 
     // Define SRAM for Q,K,V,S
     extern __shared__ float sram[];
     int tile_size = Bc * d;  // size of Qi, Kj, Vj
-    float* Qi = sram; float* Kj = &sram[tile_size]; float* Vj = &sram[tile_size * 2]; float* S = &sram[tile_size * 3];
+    float* Qi = sram;
+    float* Kj = &sram[tile_size];
+    float* Vj = &sram[tile_size * 2];
+    float* S = &sram[tile_size * 3];
 
     for (int j = 0; j < Tc; j++) {
 
@@ -31,7 +30,7 @@ void forward_kernel(const float* Q, const float* K, const float* V, const int N,
 
             // Load Qi to SRAM, l and m to registers
             for (int x = 0; x < d; x++) {
-                Qi[(tx * d) + x] = Q[offset + (tile_size * i) + (tx * d) + x];
+                Qi[(tx * d) + x] = Q[qkv_offset + (tile_size * i) + (tx * d) + x];
             }
             float row_m_prev = m[lm_offset + (Br * i) + tx];
             float row_l_prev = l[lm_offset + (Br * i) + tx];
@@ -41,10 +40,13 @@ void forward_kernel(const float* Q, const float* K, const float* V, const int N,
             for (int y = 0; y < Bc; y++) {
                 float sum = 0;
                 for (int x = 0; x < d; x++) {
-                    sum += Qi[(tx * d) + x] * Ks[(y * d) + x];
+                    sum += Qi[(tx * d) + x] * Kj[(y * d) + x];
                 }
                 sum *= softmax_scale;
                 S[(Bc * tx) + y] = sum;
+
+                if (sum > row_m)
+                    row_m = sum;
             }
 
             // P = exp(S - row_m), row_l = rowsum(P)
@@ -86,9 +88,9 @@ torch::Tensor forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
     const float softmax_scale = 1.0 / sqrt(d);
 
     // Initialize O, l, m to HBM
-    auto O = torch.zeros_like(Q);
-    auto l = torch.zeros({B, nh, N});
-    auto m = torch.full({B, nh, N}, -INFINITY);
+    auto O = torch::zeros_like(Q);
+    auto l = torch::zeros({B, nh, N});
+    auto m = torch::full({B, nh, N}, -INFINITY);
     torch::Device device(torch::kCUDA);
     l = l.to(device); m = m.to(device);
 
@@ -101,7 +103,7 @@ torch::Tensor forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
     dim3 grid_dim(B, nh);  // batch_size x num_heads
     dim3 block_dim(Bc);  // Bc threads per block
 
-    flash_kernel<<<grid_dim, block_dim, sram_size>>>(
+    forward_kernel<<<grid_dim, block_dim, sram_size>>>(
         Q.data_ptr<float>(), K.data_ptr<float>(), V.data_ptr<float>(),
         N, d, Tc, Tr, Bc, Br, softmax_scale,
         l.data_ptr<float>(), m.data_ptr<float>(), O.data_ptr<float>()
