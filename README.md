@@ -9,16 +9,20 @@ The official [implementation](https://github.com/Dao-AILab/flash-attention) can 
 ## Usage
 Compare the wall-clock time between manual attention and minimal flash attention:
 ```
-python benchmark.py
+python bench.py
 ```
 
 ### I don't have a GPU
-Check out this [online colab demo](https://colab.research.google.com/gist/tspeterkim/143bc7be7a845656817cf94c5228598e/demo-flash-attention-minimal.ipynb).
+Try out this [online colab demo](https://colab.research.google.com/gist/tspeterkim/143bc7be7a845656817cf94c5228598e/demo-flash-attention-minimal.ipynb).
 
 ## Caveats
-* No backward pass!
+* No backward pass! To be honest, I found it a lot more complex than the forward pass, which was enough to show the
+use of shared memory to avoid large N^2 read/writes.
+* In the inner loop, I assign each thread to a row of the output matrix. This differs from the original implementation.
+* This thread-per-row simplification makes the matrix multiplications very slow. This is probably why for longer 
+sequences and larger block sizes, this minimal implementation becomes slower than the manual implementation.
+* Q,K,Vs are in float32, unlike the original implementation which expects float16.
 
-## References
-The paper: https://arxiv.org/abs/2205.14135
-
-Official implementation: https://github.com/Dao-AILab/flash-attention
+## Todos
+- [ ] Add backward pass
+- [ ] Speed up matmults
