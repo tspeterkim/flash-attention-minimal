@@ -71,3 +71,8 @@ sequences and larger block sizes, this gets slower than the manual implementatio
 
 * [ ] Speed up matmults
 * [ ] Dynamically set block size
+
+## Contributors
+
+* [Peter Kim](https://github.com/tspeterkim), Lead Contributor
+* [Franz Cesista](https://github.com/leloykun), Implemented the backward pass
