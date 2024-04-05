@@ -291,7 +291,7 @@ torch::Tensor forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
   cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
 
   dim3 grid_dim(B, nh);  // batch_size x num_heads
-  dim3 block_dim(128);  // Bc threads per block
+  dim3 block_dim(128);   // 4 Warps per block
 
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
