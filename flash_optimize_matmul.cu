@@ -150,11 +150,11 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
 
       // thread level reduce max
       #pragma unroll
-      for (int xi = 0; xi < Bc / 16; xi++){
+      for (int xi = 0; xi < Bc / 16; xi++) {
         #pragma unroll
-        for (int tc_yi = 0; tc_yi < 2; tc_yi++){
+        for (int tc_yi = 0; tc_yi < 2; tc_yi++) {
           #pragma unroll
-          for (int tc_xi = 0; tc_xi < 2; tc_xi++){
+          for (int tc_xi = 0; tc_xi < 2; tc_xi++) {
             float tmp_val1 = __half2float(reg[xi * 8 + tc_xi * 4 + tc_yi * 2 + 0]);
             float tmp_val2 = __half2float(reg[xi * 8 + tc_xi * 4 + tc_yi * 2 + 1]);
             float tmp_max_val = max(tmp_val1, tmp_val2) * softmax_scale;
@@ -165,20 +165,20 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
 
       // warp level reduce max
       #pragma unroll
-      for (int s = 2; s > 0; s >>= 1){
+      for (int s = 2; s > 0; s >>= 1) {
         #pragma unroll
-        for (int tc_yi = 0; tc_yi < 2; tc_yi++){
+        for (int tc_yi = 0; tc_yi < 2; tc_yi++) {
           thread_max[tc_yi] = max(thread_max[tc_yi], __shfl_xor_sync(0xffffffff, thread_max[tc_yi], s, 4));
         }
       }
       
       // thread level reduce sum
       #pragma unroll
-      for (int xi = 0; xi < Bc / 16; xi++){
+      for (int xi = 0; xi < Bc / 16; xi++) {
         #pragma unroll
-        for (int tc_yi = 0; tc_yi < 2; tc_yi++){
+        for (int tc_yi = 0; tc_yi < 2; tc_yi++) {
           #pragma unroll
-          for (int tc_xi = 0; tc_xi < 2; tc_xi++){
+          for (int tc_xi = 0; tc_xi < 2; tc_xi++) {
             float tmp_sum_val_0 = __expf(__half2float(reg[xi * 8 + tc_xi * 4 + tc_yi * 2 + 0]) * softmax_scale - thread_max[tc_yi]);
             float tmp_sum_val_1 = __expf(__half2float(reg[xi * 8 + tc_xi * 4 + tc_yi * 2 + 1]) * softmax_scale - thread_max[tc_yi]);
             reg[xi * 8 + tc_xi * 4 + tc_yi * 2 + 0] = __float2half(tmp_sum_val_0);
@@ -190,9 +190,9 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
 
       // warp level reduce sum
       #pragma unroll
-      for (int s = 2; s > 0; s >>= 1){
+      for (int s = 2; s > 0; s >>= 1) {
         #pragma unroll
-        for (int tc_yi = 0; tc_yi < 2; tc_yi++){
+        for (int tc_yi = 0; tc_yi < 2; tc_yi++) {
           thread_sum[tc_yi] += __shfl_xor_sync(0xffffffff, thread_sum[tc_yi], s, 4);
         }
       }
@@ -227,13 +227,13 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
 
         FETCH_FLOAT4(reg[0]) = FETCH_FLOAT4(RD[0]);
         #pragma unroll
-        for(int tc_yi = 0; tc_yi < 2; tc_yi++){
+        for(int tc_yi = 0; tc_yi < 2; tc_yi++) {
           float thread_max_new = max(thread_max_old[tc_yi], thread_max[tc_yi]);
           float exp_max_old = __expf(thread_max_old[tc_yi] - thread_max_new);
           float exp_max = __expf(thread_max[tc_yi] - thread_max_new);
           float thread_sum_new = exp_max_old * thread_sum_old[tc_yi] + exp_max * thread_sum[tc_yi];
           #pragma unroll
-          for(int tc_xi=0; tc_xi < 2; tc_xi++){
+          for(int tc_xi=0; tc_xi < 2; tc_xi++) {
             int lane_pos = (warpId * 16 * d) + (laneId / 4 + tc_yi * 8) * d + tc_xi * 8 + laneId % 4 * 2 + (k * 16);
             Os[lane_pos] = __float2half(
               __frcp_rn(thread_sum_new) *
@@ -251,7 +251,7 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
       }
 
       // update m, l
-      for(int tc_yi = 0; tc_yi < 2; tc_yi++){
+      for(int tc_yi = 0; tc_yi < 2; tc_yi++) {
         float thread_max_new = max(thread_max_old[tc_yi], thread_max[tc_yi]);
         float exp_max_old = __expf(thread_max_old[tc_yi] - thread_max_new);
         float exp_max = __expf(thread_max[tc_yi] - thread_max_new);
