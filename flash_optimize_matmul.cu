@@ -19,9 +19,10 @@
                  : "=r"(RD0), "=r"(RD1)                                                                                \
                  : "r"(RA0), "r"(RA1), "r"(RA2), "r"(RA3), "r"(RB0), "r"(RB1), "r"(RC0), "r"(RC1))
 
+template<const int Bc, const int Br>
 __global__
 void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
-                    const int Tc, const int Tr, const int Bc, const int Br, const float softmax_scale,
+                    const int Tc, const int Tr, const float softmax_scale,
                     half* O) {
   // batch and head index
   int bx = blockIdx.x; int by = blockIdx.y;
@@ -295,11 +296,11 @@ torch::Tensor forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
 
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-  forward_kernel<<<grid_dim, block_dim, sram_size, stream>>>(
+  forward_kernel<Bc, Br><<<grid_dim, block_dim, sram_size, stream>>>(
     reinterpret_cast<half*>(Q.data_ptr()),
     reinterpret_cast<half*>(K.data_ptr()),
     reinterpret_cast<half*>(V.data_ptr()),
-    N, d, Tc, Tr, Bc, Br, softmax_scale,
+    N, d, Tc, Tr, softmax_scale,
     reinterpret_cast<half*>(O.data_ptr())
   );
   return O;
