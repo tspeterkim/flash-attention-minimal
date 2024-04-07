@@ -75,7 +75,7 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
       float thread_sum[2] = { 0, 0 };
 
       // REGISTER for mma
-      uint32_t RC[8][2] = { 0, };
+      uint32_t RC[Bc / 8][2] = { 0, };
       uint32_t RA[4];
       uint32_t RB[4];
       uint32_t RD[4];
