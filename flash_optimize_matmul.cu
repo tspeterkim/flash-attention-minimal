@@ -19,9 +19,9 @@
                  : "=r"(RD0), "=r"(RD1)                                                                                \
                  : "r"(RA0), "r"(RA1), "r"(RA2), "r"(RA3), "r"(RB0), "r"(RB1), "r"(RC0), "r"(RC1))
 
-template<const int Bc, const int Br>
+template<const int Bc, const int Br, const int d>
 __global__
-void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
+void forward_kernel(half* Q, half* K, half* V, const int N,
                     const int Tc, const int Tr, const float softmax_scale,
                     half* O) {
   // batch and head index
@@ -36,11 +36,10 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
 
   // Define SRAM for Q,K,V,O
   extern __shared__ half sram[];
-  int tile_size = Br * d;  // size of Qi, Kj, Vj, Os (Br == Bc)
+  int tile_size = Br * d;  // size of Qi, Kj, Vj (Br == Bc)
   half* Qi = sram;
   half* Kj = sram + tile_size;
   half* Vj = sram + tile_size; // share with K
-  half* Os = sram + tile_size * 2;  // O shared
 
   // temporary register
   half reg[32];
@@ -57,17 +56,15 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
 
       FETCH_FLOAT4(Qi[new_dim_y * 16 + new_dim_x]) =
         FETCH_FLOAT4(Q[qkv_offset + (i * tile_size) + x]);
-
-      // initialize O shared memory 0
-      for (int iter = 0; iter < 8; iter++) {
-        Os[x + iter] = __float2half(0);
-      }
     }
     __syncthreads();
 
     // m_old, l_old
     float thread_max_old[2] = { -INFINITY, -INFINITY }; 
     float thread_sum_old[2] = { 0, 0 };
+
+    // REGISTER for O
+    float RO[d / 16][2][2][2] = { 0, };
 
     for (int j = 0; j < Tc; j++) {
       // m, l
@@ -235,18 +232,17 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
           float thread_sum_new = exp_max_old * thread_sum_old[tc_yi] + exp_max * thread_sum[tc_yi];
           #pragma unroll
           for(int tc_xi=0; tc_xi < 2; tc_xi++) {
-            int lane_pos = (warpId * 16 * d) + (laneId / 4 + tc_yi * 8) * d + tc_xi * 8 + laneId % 4 * 2 + (k * 16);
-            Os[lane_pos] = __float2half(
+            RO[k][tc_yi][tc_xi][0] =
               __frcp_rn(thread_sum_new) *
               (thread_sum_old[tc_yi] *
-               exp_max_old * __half2float(Os[lane_pos]) +
-               exp_max * __half2float(reg[tc_xi * 4 + tc_yi * 2 + 0])));
+               exp_max_old * RO[k][tc_yi][tc_xi][0] +
+               exp_max * __half2float(reg[tc_xi * 4 + tc_yi * 2 + 0]));
 
-            Os[lane_pos + 1] = __float2half(
+            RO[k][tc_yi][tc_xi][1] =
               __frcp_rn(thread_sum_new) *
               (thread_sum_old[tc_yi] *
-               exp_max_old * __half2float(Os[lane_pos + 1]) +
-               exp_max * __half2float(reg[tc_xi * 4 + tc_yi * 2 + 1])));
+               exp_max_old * RO[k][tc_yi][tc_xi][1] +
+               exp_max * __half2float(reg[tc_xi * 4 + tc_yi * 2 + 1]));
           }
         }
       }
@@ -263,10 +259,17 @@ void forward_kernel(half* Q, half* K, half* V, const int N, const int d,
       __syncthreads();
     }
 
-    // FETCHING O shared to O global
-    for (int x = threadIdx.x * 8; x < tile_size; x += 1024) {
-      FETCH_FLOAT4(O[qkv_offset + (i * tile_size) + x]) =
-        FETCH_FLOAT4(Os[x]);
+    // update O
+    for (int k = 0; k < d / 16; k++) {
+      #pragma unroll
+      for(int tc_yi = 0; tc_yi < 2; tc_yi++) {
+        #pragma unroll
+        for(int tc_xi=0; tc_xi < 2; tc_xi++) {
+          int lane_pos = qkv_offset + i * Br * d + (warpId * 16 * d) + (laneId / 4 + tc_yi * 8) * d + tc_xi * 8 + laneId % 4 * 2 + (k * 16);
+          O[lane_pos + 0] = __float2half(RO[k][tc_yi][tc_xi][0]);
+          O[lane_pos + 1] = __float2half(RO[k][tc_yi][tc_xi][1]);
+        }
+      }
     }
     __syncthreads();
   }
@@ -287,7 +290,7 @@ torch::Tensor forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
   auto O = torch::zeros_like(Q, options);
 
   // Calculate SRAM size needed per block
-  const int sram_size = (3 * Br * d * sizeof(half));
+  const int sram_size = (2 * Br * d * sizeof(half));
   int max_sram_size;
   cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
 
@@ -296,12 +299,23 @@ torch::Tensor forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
 
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-  forward_kernel<Bc, Br><<<grid_dim, block_dim, sram_size, stream>>>(
-    reinterpret_cast<half*>(Q.data_ptr()),
-    reinterpret_cast<half*>(K.data_ptr()),
-    reinterpret_cast<half*>(V.data_ptr()),
-    N, d, Tc, Tr, softmax_scale,
-    reinterpret_cast<half*>(O.data_ptr())
-  );
+  if (d == 64) {
+    forward_kernel<Bc, Br, 64><<<grid_dim, block_dim, sram_size, stream>>>(
+      reinterpret_cast<half*>(Q.data_ptr()),
+      reinterpret_cast<half*>(K.data_ptr()),
+      reinterpret_cast<half*>(V.data_ptr()),
+      N, Tc, Tr, softmax_scale,
+      reinterpret_cast<half*>(O.data_ptr())
+    );
+  }
+  if (d == 128) {
+    forward_kernel<Bc, Br, 128><<<grid_dim, block_dim, sram_size, stream>>>(
+      reinterpret_cast<half*>(Q.data_ptr()),
+      reinterpret_cast<half*>(K.data_ptr()),
+      reinterpret_cast<half*>(V.data_ptr()),
+      N, Tc, Tr, softmax_scale,
+      reinterpret_cast<half*>(O.data_ptr())
+    );
+  }
   return O;
 }
