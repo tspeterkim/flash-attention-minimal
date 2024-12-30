@@ -44,7 +44,7 @@ for _ in range(10):
     t1 = time.time()
     flash_times.append(t1-t0)
 
-# Print average elapased time and speedup
+# Print average elapased time
 print('---- profiling results ----')
 print(f'manual attention: {sum(manual_times)*1000/len(manual_times):.3f} ms')
 print(f'flash attention: {sum(flash_times)*1000/len(flash_times):.3f} ms')
