@@ -45,5 +45,5 @@ sequences and larger block sizes, this gets slower than the manual implementatio
 
 ## Todos
 - [ ] Add backward pass
-- [ ] Speed up matmults
+- [x] Speed up matmults -> Check out the `tensorcore` branch
 - [ ] Dynamically set block size
