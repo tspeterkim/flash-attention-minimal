@@ -29,6 +29,13 @@ __global__ void forward_kernel_wmma(const float* Q, const float* K, const float*
     float* Vj = &sram[tile_size * 2];
     float* Sij = &sram[tile_size * 3];
 
+    // Initialize l and m
+    for (int x = 0; x < N; x += WARP_SIZE) {
+        if (x + tx < N) {
+            l[lm_offset + tx + x] = 0; m[lm_offset + tx + x] = -INFINITY;
+        }
+    }
+
     for (int j = 0; j < Tc; j++) {
 
         // Load Kj, Vj to SRAM
@@ -106,10 +113,6 @@ __global__ void forward_kernel_wmma(const float* Q, const float* K, const float*
 
                 // Write O, l, m to HBM
                 for (int x = 0; x < d; x++) {
-                    // float pv = 0;  // Pij * Vj
-                    // for (int y = 0; y < Bc; y++) {
-                    //     pv += Sij[(Bc * tx) + y] * Vj[(y * d) + x];
-                    // }
                     O[qkv_offset + (tile_size * i) + (tx * d) + x] = (1 / row_l_new) \
                         * ((row_l_prev * __expf(row_m_prev - row_m_new) * O[qkv_offset + (tile_size * i) + (tx * d) + x]) \
                         + (__expf(row_m - row_m_new) * Qi[(tx * d) + x]));
@@ -124,7 +127,7 @@ __global__ void forward_kernel_wmma(const float* Q, const float* K, const float*
 
 __global__ void forward_kernel_naive(const float* Q, const float* K, const float* V, const int N, const int d,
                                      const int Tc, const int Tr, const int Bc, const int Br, const float softmax_scale,
-                                     float* l, float *m, float* O) {
+                                     float* l, float* m, float* O) {
     int tx = threadIdx.x;
     int bx = blockIdx.x; int by = blockIdx.y;  // batch and head index
 
@@ -139,6 +142,13 @@ __global__ void forward_kernel_naive(const float* Q, const float* K, const float
     float* Kj = &sram[tile_size];
     float* Vj = &sram[tile_size * 2];
     float* S = &sram[tile_size * 3];
+
+    // Initialize l and m
+    for (int x = 0; x < N; x += WARP_SIZE) {
+        if (x + tx < N) {
+            l[lm_offset + tx + x] = 0; m[lm_offset + tx + x] = -INFINITY;
+        }
+    }
 
     for (int j = 0; j < Tc; j++) {
 
@@ -216,10 +226,15 @@ torch::Tensor forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V, bool us
 
     // Initialize O, l, m to HBM
     auto O = torch::zeros_like(Q);
-    auto l = torch::zeros({B, nh, N});
-    auto m = torch::full({B, nh, N}, -INFINITY);
-    torch::Device device(torch::kCUDA);
-    l = l.to(device); m = m.to(device);
+    // auto O = torch::empty_like(Q);
+    // auto l = torch::zeros({B, nh, N});
+    // auto m = torch::full({B, nh, N}, -INFINITY);
+    // torch::Device device(torch::kCUDA);
+    // l = l.to(device); m = m.to(device);
+
+    float* l; float* m;
+    cudaMalloc((void**)&l, B * nh * N * sizeof(float));
+    cudaMalloc((void**)&m, B * nh * N * sizeof(float));
 
     // Calculate SRAM size needed per block
     const int sram_size = (3 * Bc * d * sizeof(float)) + (Bc * Br * sizeof(float));
@@ -231,13 +246,13 @@ torch::Tensor forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V, bool us
         forward_kernel_wmma<<<grid_dim, block_dim, sram_size>>>(
             Q.data_ptr<float>(), K.data_ptr<float>(), V.data_ptr<float>(),
             N, d, Tc, Tr, Bc, Br, softmax_scale,
-            l.data_ptr<float>(), m.data_ptr<float>(), O.data_ptr<float>()
+            l, m, O.data_ptr<float>()
         );
     } else {
         forward_kernel_naive<<<grid_dim, block_dim, sram_size>>>(
             Q.data_ptr<float>(), K.data_ptr<float>(), V.data_ptr<float>(),
             N, d, Tc, Tr, Bc, Br, softmax_scale,
-            l.data_ptr<float>(), m.data_ptr<float>(), O.data_ptr<float>()
+            l, m, O.data_ptr<float>()
         );
     }
     return O;
