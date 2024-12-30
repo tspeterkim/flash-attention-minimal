@@ -41,8 +41,8 @@ __global__ void forward_kernel_wmma(const float* Q, const float* K, const float*
         // Load Kj, Vj to SRAM
         for (int x = 0; x < tile_size; x += WARP_SIZE) {
             if (x + tx < tile_size) {
-                Kj[x + tx] = wmma::__float_to_tf32(K[qkv_offset + (tile_size * j) + x + tx]); // TF32 conversion for WMMA
-                Vj[x + tx] = wmma::__float_to_tf32(V[qkv_offset + (tile_size * j) + x + tx]);
+                Kj[x + tx] = K[qkv_offset + (tile_size * j) + x + tx]; // TF32 conversion for WMMA
+                Vj[x + tx] = V[qkv_offset + (tile_size * j) + x + tx];
             }
         }
         __syncthreads();
@@ -52,7 +52,7 @@ __global__ void forward_kernel_wmma(const float* Q, const float* K, const float*
             // Load Qi to SRAM
             for (int x = 0; x < tile_size; x += WARP_SIZE) {
                 if (x + tx < tile_size)
-                    Qi[x + tx] = wmma::__float_to_tf32(Q[qkv_offset + (tile_size * i) + x + tx]); 
+                    Qi[x + tx] = Q[qkv_offset + (tile_size * i) + x + tx]; 
             }
             __syncthreads(); 
 

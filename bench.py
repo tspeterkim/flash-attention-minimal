@@ -16,12 +16,12 @@ def manual_attn(q, k, v):
     return y
 
 # Load the CUDA kernel as a python module
-minimal_attn = load(name='minimal_attn', sources=['main.cpp', 'flash.cu'], extra_cuda_cflags=['-O2', '-use_fast_math'])
+minimal_attn = load(name='minimal_attn', sources=['main.cpp', 'flash.cu'], extra_cuda_cflags=['-O3', '-use_fast_math'])
 
 # GPT2 parameters. Slower if seq_len is too big.
 batch_size = 8
 n_head = 12
-seq_len = 256
+seq_len = 1024
 head_embd = 64
 
 manual_times, flash_times = [], []
