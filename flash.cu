@@ -83,11 +83,13 @@ void forward_kernel(const float* Q, const float* K, const float* V, const int N,
 
 torch::Tensor forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V) {
     // TODO: determine Bc, Br dynamically
-    const int Bc = 32; const int Br = 32;
 
     const int B = Q.size(0); const int nh = Q.size(1);
     const int N = Q.size(2); const int d = Q.size(3);
-
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    const int Bc = std::ceil(prop.sharedMemPerBlock/4*d);
+    const int Br = std::min(Bc,d);
     const int Tc = ceil((float) N / Bc); const int Tr = ceil((float) N / Br);
     const float softmax_scale = 1.0 / sqrt(d);
 
